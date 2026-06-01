@@ -22,6 +22,11 @@ limitations under the License.
 #include "tensorflow/lite/schema/schema_generated.h"
 
 namespace tflite {
+
+// Forward declaration; the full definition is only needed in the .cc and by
+// callers that pass an allocator to the big-endian-safe overloads below.
+class IPersistentBufferAllocator;
+
 // Kernels use flexbuffers::Map to pack their init parameters in a tflite file,
 // with the parameter names as map keys and the parameter values as the
 // corresponding map values.
@@ -55,10 +60,28 @@ uint32_t NumSubgraphOperators(const Model* model, int subgraph_idx);
 // Converts a flatbuffer array to a TfLiteArray.
 // TODO(b/188459715): These function convert a const input to a non-const via a
 // const_cast. It is unclear exactly why this is required.
+//
+// WARNING: these one-argument overloads alias the (little-endian) flatbuffer
+// memory via reinterpret_cast and are therefore only correct on little-endian
+// hosts. On big-endian hosts (e.g. SPARC) use the allocator overloads below.
 TfLiteIntArray* FlatBufferVectorToTfLiteTypeArray(
     const flatbuffers::Vector<int32_t>* flatbuffer_array);
 TfLiteFloatArray* FlatBufferVectorToTfLiteTypeArray(
     const flatbuffers::Vector<float>* flatbuffer_array);
+
+// Big-endian-safe variants. On little-endian hosts these behave exactly like
+// the one-argument overloads (a zero-copy reinterpret_cast; `allocator` is
+// unused). On big-endian hosts they allocate a new array from `allocator` and
+// copy each element through the flatbuffer accessors, which byte-swap the
+// little-endian on-disk data into the correct native value. This is required
+// because TfLiteIntArray / TfLiteFloatArray do not share memory layout with a
+// little-endian flatbuffers::Vector on a big-endian machine.
+TfLiteIntArray* FlatBufferVectorToTfLiteTypeArray(
+    const flatbuffers::Vector<int32_t>* flatbuffer_array,
+    IPersistentBufferAllocator* allocator);
+TfLiteFloatArray* FlatBufferVectorToTfLiteTypeArray(
+    const flatbuffers::Vector<float>* flatbuffer_array,
+    IPersistentBufferAllocator* allocator);
 
 }  // namespace tflite
 

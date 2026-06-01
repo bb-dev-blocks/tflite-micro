@@ -1,0 +1,88 @@
+# Copyright 2024 The TensorFlow Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+#
+# Reproducible build/run environment for the SPARC (big-endian) TFLM port.
+#
+# It provides:
+#   * qemu-sparc / qemu-sparc64 user-mode emulators (from bookworm-backports).
+#   * A prebuilt big-endian SPARC64 (V9) glibc cross toolchain from Bootlin,
+#     symlinked to the `sparc64-linux-gnu-` prefix used by the
+#     sparc_generic target (built with SPARC_BITS=64).
+#
+# A 32-bit SPARC V8 glibc Linux toolchain is not distributed as a ready-made
+# tarball, so the validated/runnable configuration here is SPARC64 (still
+# big-endian, exercising the identical runtime + kernel + endianness code).
+# For a true 32-bit V8 toolchain, install one providing `sparc-linux-gnu-*`
+# and build with the default SPARC_BITS=32 (and run with qemu-sparc).
+#
+# === Usage ===
+#   docker build -f tensorflow/lite/micro/testing/Dockerfile.sparc -t tflm-sparc .
+#   docker run --rm -v $(pwd):/opt/tflm -w /opt/tflm tflm-sparc \
+#     tensorflow/lite/micro/tools/ci_build/test_sparc.sh
+#
+# The image is pinned to linux/amd64 because the Bootlin SPARC cross toolchain
+# ships as x86-64 binaries. On an x86-64 host this runs natively; on Apple
+# Silicon / arm64 it runs under Docker's amd64 emulation (Rosetta), which works
+# but is slower.
+
+FROM --platform=linux/amd64 python:3.10-bookworm
+
+# qemu user-mode (provides qemu-sparc and qemu-sparc64). Installed from
+# backports to pick up fixes, matching ci/Dockerfile.micro.
+RUN echo "deb http://deb.debian.org/debian bookworm-backports main" \
+        > /etc/apt/sources.list.d/backports.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends -t bookworm-backports qemu-user && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        bzip2 \
+        ca-certificates \
+        git \
+        make \
+        unzip \
+        wget \
+        xxd \
+        xz-utils && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Pillow/numpy are used by the example C-array generators (e.g. person_detection).
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir Pillow numpy
+
+# Bootlin prebuilt SPARC64 (big-endian) glibc toolchain.
+ARG SPARC64_TOOLCHAIN_URL="https://toolchains.bootlin.com/downloads/releases/toolchains/sparc64/tarballs/sparc64--glibc--stable-2021.11-1.tar.bz2"
+RUN mkdir -p /opt && cd /opt && \
+    wget -q "${SPARC64_TOOLCHAIN_URL}" -O sparc64-toolchain.tar.bz2 && \
+    tar xf sparc64-toolchain.tar.bz2 && \
+    rm sparc64-toolchain.tar.bz2 && \
+    mv sparc64--glibc--stable-* sparc64-toolchain
+
+# Append (do NOT prepend) the toolchain to PATH: the Bootlin bundle ships its
+# own python3 without numpy, which must not shadow the image's Python 3.10 used
+# by the example C-array generators. All toolchain binaries are prefixed
+# (sparc64-linux-*), so they never collide with system tools.
+ENV PATH="${PATH}:/opt/sparc64-toolchain/bin"
+
+# The sparc_generic target (SPARC_BITS=64) uses the `sparc64-linux-` prefix,
+# which Bootlin ships as working buildroot wrapper scripts.
+RUN sparc64-linux-g++ --version | head -1 && \
+    python3 -c "import numpy, PIL; print('numpy', numpy.__version__)"
+
+RUN git config --system --add safe.directory '*'
+
+WORKDIR /opt/tflm

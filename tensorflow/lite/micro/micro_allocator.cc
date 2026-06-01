@@ -222,6 +222,41 @@ void* GetFlatbufferTensorBuffer(
   return out_buffer;
 }
 
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#define TFLITE_MICRO_BIG_ENDIAN 1
+#else
+#define TFLITE_MICRO_BIG_ENDIAN 0
+#endif
+
+#if TFLITE_MICRO_BIG_ENDIAN
+// Constant tensor buffers (weights, biases, constant inputs) are stored in the
+// flatbuffer in little-endian byte order. On a big-endian host (e.g. SPARC)
+// multi-byte element types must be byte-swapped before they can be read
+// correctly; otherwise float32/int16/int32/int64 constants are garbage. This
+// returns a byte-swapped copy allocated from `allocator`. Single-byte types
+// (int8/uint8/bool) and empty/null buffers are returned unchanged (no copy).
+static void* MaybeByteSwapConstantBuffer(void* buffer, size_t bytes,
+                                         size_t type_size,
+                                         IPersistentBufferAllocator* allocator) {
+  if (buffer == nullptr || bytes == 0 || type_size <= 1) {
+    return buffer;
+  }
+  uint8_t* swapped = reinterpret_cast<uint8_t*>(
+      allocator->AllocatePersistentBuffer(bytes, MicroArenaBufferAlignment()));
+  if (swapped == nullptr) {
+    return buffer;
+  }
+  const uint8_t* src = reinterpret_cast<const uint8_t*>(buffer);
+  const size_t element_count = bytes / type_size;
+  for (size_t e = 0; e < element_count; ++e) {
+    for (size_t b = 0; b < type_size; ++b) {
+      swapped[e * type_size + b] = src[e * type_size + (type_size - 1 - b)];
+    }
+  }
+  return swapped;
+}
+#endif  // TFLITE_MICRO_BIG_ENDIAN
+
 TfLiteStatus InitializeTfLiteTensorFromFlatbuffer(
     IPersistentBufferAllocator* persistent_buffer_allocator,
     INonPersistentBufferAllocator* non_persistent_buffer_allocator,
@@ -267,7 +302,8 @@ TfLiteStatus InitializeTfLiteTensorFromFlatbuffer(
     // allocation so it is safe to drop the const qualifier. In the future, if
     // we really want to update the tensor shape, we can always pass in a new
     // TfLiteIntArray - especially we have to do so if the dimension is
-    result->dims = FlatBufferVectorToTfLiteTypeArray(flatbuffer_tensor.shape());
+    result->dims = FlatBufferVectorToTfLiteTypeArray(flatbuffer_tensor.shape(),
+                                                     persistent_buffer_allocator);
   }
 
   // Copy the quantization information from the serialized data.
@@ -320,8 +356,8 @@ TfLiteStatus InitializeTfLiteTensorFromFlatbuffer(
       return kTfLiteError;
     }
 
-    quantization->scale =
-        FlatBufferVectorToTfLiteTypeArray(src_quantization->scale());
+    quantization->scale = FlatBufferVectorToTfLiteTypeArray(
+        src_quantization->scale(), persistent_buffer_allocator);
 
     quantization->zero_point->size = channels;
     int* zero_point_data = quantization->zero_point->data;
@@ -343,6 +379,7 @@ TfLiteStatus InitializeTfLiteTensorFromFlatbuffer(
 }
 
 TfLiteStatus InitializeTfLiteEvalTensorFromFlatbuffer(
+    IPersistentBufferAllocator* persistent_buffer_allocator,
     const tflite::Tensor& flatbuffer_tensor,
     const flatbuffers::Vector<flatbuffers::Offset<Buffer>>* buffers,
     TfLiteEvalTensor* result) {
@@ -354,12 +391,26 @@ TfLiteStatus InitializeTfLiteEvalTensorFromFlatbuffer(
 
   result->data.data = GetFlatbufferTensorBuffer(flatbuffer_tensor, buffers);
 
+#if TFLITE_MICRO_BIG_ENDIAN
+  // On big-endian hosts, byte-swap multi-byte constant tensor data so the
+  // little-endian flatbuffer contents are read correctly during inference.
+  if (result->data.data != nullptr) {
+    size_t bytes = 0;
+    size_t type_size = 0;
+    TF_LITE_ENSURE_STATUS(
+        BytesRequiredForTensor(flatbuffer_tensor, &bytes, &type_size));
+    result->data.data = MaybeByteSwapConstantBuffer(
+        result->data.data, bytes, type_size, persistent_buffer_allocator);
+  }
+#endif  // TFLITE_MICRO_BIG_ENDIAN
+
   if (flatbuffer_tensor.shape() == nullptr) {
     // flatbuffer_tensor.shape() can return a nullptr in the case of a scalar
     // tensor.
     result->dims = const_cast<TfLiteIntArray*>(&kZeroLengthIntArray);
   } else {
-    result->dims = FlatBufferVectorToTfLiteTypeArray(flatbuffer_tensor.shape());
+    result->dims = FlatBufferVectorToTfLiteTypeArray(
+        flatbuffer_tensor.shape(), persistent_buffer_allocator);
   }
   return kTfLiteOk;
 }
@@ -482,6 +533,10 @@ TfLiteStatus InitializeCompressionTensorDataFromFlatbuffer(
       tensor->quantization()->scale()->size() > 1) {
     const size_t num_channels = tensor->quantization()->scale()->size();
     ctd->data.lut_data->is_per_channel_quantized = true;
+    // NOTE: USE_TFLM_COMPRESSION is not enabled on big-endian targets today, so
+    // the little-endian-only overload is used here. If compression is ever
+    // enabled on a big-endian host, thread a persistent allocator in and use
+    // the allocator overload (only dims->size is read below).
     const TfLiteIntArray* dims =
         FlatBufferVectorToTfLiteTypeArray(tensor->shape());
     int32_t quantized_axis = tensor->quantization()->quantized_dimension();
@@ -1057,7 +1112,8 @@ TfLiteStatus MicroAllocator::AllocateTfLiteEvalTensors(
 
     for (size_t i = 0; i < alloc_count; ++i) {
       TfLiteStatus status = internal::InitializeTfLiteEvalTensorFromFlatbuffer(
-          *subgraph->tensors()->Get(i), model->buffers(), &tensors[i]);
+          persistent_buffer_allocator_, *subgraph->tensors()->Get(i),
+          model->buffers(), &tensors[i]);
       if (status != kTfLiteOk) {
         MicroPrintf("Failed to initialize tensor %d", i);
         return kTfLiteError;

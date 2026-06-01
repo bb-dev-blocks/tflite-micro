@@ -42,7 +42,14 @@ TfLiteStatus ProfileMemoryAndLatency() {
 
   // Arena size just a round number. The exact arena usage can be determined
   // using the RecordingMicroInterpreter.
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+  // Big-endian targets (e.g. SPARC) byte-swap multi-byte constant tensor data
+  // into the arena instead of referencing it in place, and 64-bit pointers
+  // enlarge the runtime structures, so a larger arena is required here.
+  constexpr int kTensorArenaSize = 8192;
+#else
   constexpr int kTensorArenaSize = 3000;
+#endif
   uint8_t tensor_arena[kTensorArenaSize];
   constexpr int kNumResourceVariables = 24;
 
@@ -76,7 +83,14 @@ TfLiteStatus LoadFloatModelAndPerformInference() {
 
   // Arena size just a round number. The exact arena usage can be determined
   // using the RecordingMicroInterpreter.
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+  // Big-endian targets (e.g. SPARC) byte-swap multi-byte constant tensor data
+  // into the arena instead of referencing it in place, and 64-bit pointers
+  // enlarge the runtime structures, so a larger arena is required here.
+  constexpr int kTensorArenaSize = 8192;
+#else
   constexpr int kTensorArenaSize = 3000;
+#endif
   uint8_t tensor_arena[kTensorArenaSize];
 
   tflite::MicroInterpreter interpreter(model, op_resolver, tensor_arena,
@@ -111,7 +125,14 @@ TfLiteStatus LoadQuantModelAndPerformInference() {
 
   // Arena size just a round number. The exact arena usage can be determined
   // using the RecordingMicroInterpreter.
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+  // Big-endian targets (e.g. SPARC) byte-swap multi-byte constant tensor data
+  // into the arena instead of referencing it in place, and 64-bit pointers
+  // enlarge the runtime structures, so a larger arena is required here.
+  constexpr int kTensorArenaSize = 8192;
+#else
   constexpr int kTensorArenaSize = 3000;
+#endif
   uint8_t tensor_arena[kTensorArenaSize];
 
   tflite::MicroInterpreter interpreter(model, op_resolver, tensor_arena,

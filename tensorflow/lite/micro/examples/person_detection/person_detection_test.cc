@@ -27,6 +27,11 @@ limitations under the License.
 // Create an area of memory to use for input, output, and intermediate arrays.
 #if defined(XTENSA) && defined(VISION_P6)
 constexpr int tensor_arena_size = 352 * 1024;
+#elif defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+// Big-endian targets (e.g. SPARC) byte-swap multi-byte constant tensor data
+// (e.g. int32 biases) into the arena, and 64-bit pointers enlarge runtime
+// structures, so a little more arena is required than the 136 KiB baseline.
+constexpr int tensor_arena_size = 160 * 1024;
 #else
 constexpr int tensor_arena_size = 136 * 1024;
 #endif  // defined(XTENSA) && defined(VISION_P6)

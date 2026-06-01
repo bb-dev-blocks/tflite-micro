@@ -240,6 +240,13 @@ class MicroAllocator {
   // arena.
   virtual void* AllocatePersistentBuffer(size_t bytes);
 
+  // Returns the underlying persistent buffer allocator. Used by callers (e.g.
+  // the interpreter) that need to allocate byte-swapped copies of flatbuffer
+  // arrays on big-endian hosts via FlatBufferVectorToTfLiteTypeArray().
+  IPersistentBufferAllocator* GetPersistentBufferAllocator() {
+    return persistent_buffer_allocator_;
+  }
+
   // Register a scratch buffer of size `bytes` for Node with `node_id`.
   // This method only requests a buffer with a given size to be used after a
   // model has finished allocation via FinishModelAllocation(). All requested

@@ -15,6 +15,17 @@ limitations under the License.
 
 #include "tensorflow/lite/micro/flatbuffer_utils.h"
 
+#include "tensorflow/lite/micro/arena_allocator/ibuffer_allocator.h"
+#include "tensorflow/lite/micro/micro_arena_constants.h"
+
+// Big-endian detection. SPARC and other big-endian targets need a software
+// byte-swap because the tflite/flatbuffer wire format is little-endian.
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#define TFLITE_FLATBUFFER_BIG_ENDIAN 1
+#else
+#define TFLITE_FLATBUFFER_BIG_ENDIAN 0
+#endif
+
 namespace tflite {
 
 FlexbufferWrapper::FlexbufferWrapper(const uint8_t* buffer, size_t size)
@@ -79,6 +90,46 @@ TfLiteFloatArray* FlatBufferVectorToTfLiteTypeArray(
   // TODO(b/188459715): audit this usage of const_cast.
   return const_cast<TfLiteFloatArray*>(
       reinterpret_cast<const TfLiteFloatArray*>(flatbuffer_array));
+}
+
+TfLiteIntArray* FlatBufferVectorToTfLiteTypeArray(
+    const flatbuffers::Vector<int32_t>* flatbuffer_array,
+    IPersistentBufferAllocator* allocator) {
+#if TFLITE_FLATBUFFER_BIG_ENDIAN
+  const int size = static_cast<int>(flatbuffer_array->size());
+  TfLiteIntArray* result = reinterpret_cast<TfLiteIntArray*>(
+      allocator->AllocatePersistentBuffer(TfLiteIntArrayGetSizeInBytes(size),
+                                          MicroArenaBufferAlignment()));
+  result->size = size;
+  for (int i = 0; i < size; ++i) {
+    // Vector::Get() reads through EndianScalar(), yielding the correct native
+    // value from the little-endian on-disk representation.
+    result->data[i] = flatbuffer_array->Get(i);
+  }
+  return result;
+#else
+  (void)allocator;
+  return FlatBufferVectorToTfLiteTypeArray(flatbuffer_array);
+#endif
+}
+
+TfLiteFloatArray* FlatBufferVectorToTfLiteTypeArray(
+    const flatbuffers::Vector<float>* flatbuffer_array,
+    IPersistentBufferAllocator* allocator) {
+#if TFLITE_FLATBUFFER_BIG_ENDIAN
+  const int size = static_cast<int>(flatbuffer_array->size());
+  TfLiteFloatArray* result = reinterpret_cast<TfLiteFloatArray*>(
+      allocator->AllocatePersistentBuffer(TfLiteFloatArrayGetSizeInBytes(size),
+                                          MicroArenaBufferAlignment()));
+  result->size = size;
+  for (int i = 0; i < size; ++i) {
+    result->data[i] = flatbuffer_array->Get(i);
+  }
+  return result;
+#else
+  (void)allocator;
+  return FlatBufferVectorToTfLiteTypeArray(flatbuffer_array);
+#endif
 }
 
 }  // namespace tflite

@@ -174,10 +174,10 @@ TfLiteStatus MicroInterpreter::PrepareNodeAndRegistrationDataFromFlatbuffer() {
             parser, op, builtin_data_allocator, (void**)(&builtin_data)));
       }
 
-      TfLiteIntArray* inputs_array =
-          FlatBufferVectorToTfLiteTypeArray(op->inputs());
-      TfLiteIntArray* outputs_array =
-          FlatBufferVectorToTfLiteTypeArray(op->outputs());
+      TfLiteIntArray* inputs_array = FlatBufferVectorToTfLiteTypeArray(
+          op->inputs(), allocator_.GetPersistentBufferAllocator());
+      TfLiteIntArray* outputs_array = FlatBufferVectorToTfLiteTypeArray(
+          op->outputs(), allocator_.GetPersistentBufferAllocator());
 
       TfLiteNode* node = &(
           graph_.GetAllocations()[subgraph_idx].node_and_registrations[i].node);
@@ -189,8 +189,8 @@ TfLiteStatus MicroInterpreter::PrepareNodeAndRegistrationDataFromFlatbuffer() {
       node->custom_initial_data_size = custom_data_size;
 
       if (op->intermediates() && (op->intermediates()->size() > 0)) {
-        node->intermediates =
-            FlatBufferVectorToTfLiteTypeArray(op->intermediates());
+        node->intermediates = FlatBufferVectorToTfLiteTypeArray(
+            op->intermediates(), allocator_.GetPersistentBufferAllocator());
       }
     }
   }
